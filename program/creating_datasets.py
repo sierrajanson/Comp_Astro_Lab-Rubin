@@ -289,18 +289,18 @@ def create_cutouts(segment_map, image, variance, psf):
         return cutouts
 
 def cutout_sersic_fitting(segment_map, cutouts):
-        """fit sersic profiles to source cutouts using pysersic"""
-        from pysersic import FitSingle
-        from pysersic.priors import SourceProperties
-        from pysersic import check_input_data
-        from pysersic import FitSingle
-        from pysersic.loss import gaussian_loss
-        from pysersic.results import plot_residual
-        from jax.random import PRNGKey
+	"""fit sersic profiles to source cutouts using pysersic"""
+	from pysersic import FitSingle
+	from pysersic.priors import SourceProperties
+	from pysersic import check_input_data
+	from pysersic import FitSingle
+	from pysersic.loss import gaussian_loss
+	from pysersic.results import plot_residual
+	from jax.random import PRNGKey
 
-        labelled_seg = np.zeros((segment_map.shape[0],segment_map.shape[1],3))
-        mis_match_count = 0
-        for i in range(len(cutouts)):
+	labelled_seg = np.zeros((segment_map.shape[0],segment_map.shape[1],3))
+	mis_match_count = 0
+	for i in range(len(cutouts)):
                 im,im_data,mask,sig,psf,label = cutouts[i] # image, mask, variance, psf
                 if (im_data.shape[0] != im_data.shape[1]):
                         print('This should not happen.')
@@ -347,7 +347,7 @@ def cutout_sersic_fitting(segment_map, cutouts):
                         except Exception as error:
                                 print(f"error with image number {i}.")
                                 print(f"Error: {error}")
-        print(mis_match_count)
+	return labelled_seg
 
                                 
 def sersic_fitting_process(image_path):
@@ -367,8 +367,17 @@ def sersic_fitting_process(image_path):
 # Run the program
 #######################################
 if __name__=="__main__":
-        retrieved_images = image_retrieval()
-        labelled_segs = []
-        for image_path in retrieved_images:
-            labelled_seg = sersic_fitting_process(image_path)
-            labelled_segs.append(labelled_seg)
+	#retrieved_images = image_retrieval()
+	retrieved_images = ["retrieved_fits/image0.fits"]
+	labelled_segs = []
+	for i in range(len(retrieved_images)):
+		labelled_seg = sersic_fitting_process(retrieved_images[i])
+		labelled_segs.append(labelled_seg)
+		with open(f"labelled_segment_maps/labelled_seg{i}.txt",'w') as file:
+			for i in range(len(labelled_seg)):
+				for j in range(len(labelled_seg[0])):
+					for k in range(3):
+						file.write(str(labelled_seg[i][j][k])+',')
+					file.write(' ')
+				file.write('\n')
+
