@@ -200,7 +200,7 @@ def set_up(image_path):
         hdul = fits.open(image_path)
         image = hdul[1].data            # image
         variance = hdul[3].data    # variance
-        
+        print(image.shape)
         psfex_info = hdul[9]
         psfex_data = hdul[10]
         pixstep = psfex_info.data._pixstep[0]  # Image pixel per PSF pixel
@@ -289,18 +289,18 @@ def create_cutouts(segment_map, image, variance, psf):
         return cutouts
 
 def cutout_sersic_fitting(segment_map, cutouts):
-	"""fit sersic profiles to source cutouts using pysersic"""
-	from pysersic import FitSingle
-	from pysersic.priors import SourceProperties
-	from pysersic import check_input_data
-	from pysersic import FitSingle
-	from pysersic.loss import gaussian_loss
-	from pysersic.results import plot_residual
-	from jax.random import PRNGKey
+    """fit sersic profiles to source cutouts using pysersic"""
+    from pysersic import FitSingle
+    from pysersic.priors import SourceProperties
+    from pysersic import check_input_data
+    from pysersic import FitSingle
+    from pysersic.loss import gaussian_loss
+    from pysersic.results import plot_residual
+    from jax.random import PRNGKey
 
-	labelled_seg = np.zeros((segment_map.shape[0],segment_map.shape[1],3))
-	mis_match_count = 0
-	for i in range(len(cutouts)):
+    labelled_seg = np.zeros((segment_map.shape[0],segment_map.shape[1],3))
+    mis_match_count = 0
+    for i in range(len(cutouts)):
                 im,im_data,mask,sig,psf,label = cutouts[i] # image, mask, variance, psf
                 if (im_data.shape[0] != im_data.shape[1]):
                         print('This should not happen.')
@@ -308,46 +308,50 @@ def cutout_sersic_fitting(segment_map, cutouts):
                         mis_match_count+=1
                 else:
                         check_input_data(im_data, sig, psf, mask)
-
                         # Prior Estimation of Parameters
                         props = SourceProperties(im_data,mask=mask) 
                         prior = props.generate_prior('sersic',sky_type='none')
 
                         # Fit
                         try:
-                                fitter = FitSingle(data=im_data,rms=sig, psf=psf, prior=prior, mask=mask, loss_func=gaussian_loss) 
-                                map_params = fitter.find_MAP(rkey = PRNGKey(1000));               # contains dictionary of Sersic values
-                                # fig, ax = plot_residual(im.data,map_params['model'],mask=mask,vmin=-1,vmax=1);
-                                # fig.suptitle("Analysis of Fit")
+                            fitter = FitSingle(data=im_data,rms=sig, psf=psf, prior=prior, mask=mask, loss_func=gaussian_loss) 
+                            map_params = fitter.find_MAP(rkey = PRNGKey(1000));               # contains dictionary of Sersic values
+                            # fig, ax = plot_residual(im.data,map_params['model'],mask=mask,vmin=-1,vmax=1);
+                            # fig.suptitle("Analysis of Fit")
 
-                                ##############################################
-                                # Testing Fit -------------------------------#
-                                # (does it belong in training dataset)
-                                ##############################################
-                                image = im_data
-                                model = map_params['model']
-                                assert(image.shape == model.shape)
+                            ##############################################
+                            # Testing Fit -------------------------------#
+                            # (does it belong in training dataset)
+                            ##############################################
+                            image = im_data
+                            model = map_params['model']
+                            assert(image.shape == model.shape)
 
-                                # Chi-squared Statistic ----------------------------------------------------------------#
-                                # (evaluating whether the difference in Image and Model is systematic or due to noise)
+                            # Chi-squared Statistic ----------------------------------------------------------------#
+                            # (evaluating whether the difference in Image and Model is systematic or due to noise)
 
-                                from scipy.stats import chi2
-                                chi_square = np.sum((image*2.2 - model) ** 2 / (model))
-                                df = image.size-1                                                 # number of categories - 1
-                                p_value = chi2.sf(chi_square, df)
+                            from scipy.stats import chi2
+                            chi_square = np.sum((image*2.2 - model) ** 2 / (model))
+                            df = image.size-1                                                 # number of categories - 1
+                            p_value = chi2.sf(chi_square, df)
 
-                                ##############################################
-                                # Labelling the Segmap ----------------------#
-                                ##############################################
-                                n = map_params['n']
-                                for xpos in range(im.xmin_original, im.xmax_original,1):
-                                        for ypos in range(im.ymin_original, im.ymax_original,1):
-                                                if (xpos < image.shape[0] and ypos < image.shape[1]):
-                                                        labelled_seg[xpos][ypos] = [label, n, p_value]
+                            ##############################################
+                            # Labelling the Segmap ----------------------#
+                            ##############################################
+                            n = map_params['n']
+                            print(n)
+                            print(p_value)
+                            print(label)
+                            
+                            print(im.xmin_original, im.xmax_original, im.ymin_original, im.ymax_original)
+                            for xpos in range(im.xmin_original, im.xmax_original,1):
+                                for ypos in range(im.ymin_original, im.ymax_original,1):
+                                    if (xpos < 4100 and ypos < 4200): # verify these the image dimensions for all cutouts (why not a square ?)
+                                        labelled_seg[xpos][ypos] = [label, n, p_value]
                         except Exception as error:
                                 print(f"error with image number {i}.")
                                 print(f"Error: {error}")
-	return labelled_seg
+    return labelled_seg
 
                                 
 def sersic_fitting_process(image_path):
@@ -367,17 +371,17 @@ def sersic_fitting_process(image_path):
 # Run the program
 #######################################
 if __name__=="__main__":
-	#retrieved_images = image_retrieval()
-	retrieved_images = ["retrieved_fits/image0.fits"]
-	labelled_segs = []
-	for i in range(len(retrieved_images)):
-		labelled_seg = sersic_fitting_process(retrieved_images[i])
-		labelled_segs.append(labelled_seg)
-		with open(f"labelled_segment_maps/labelled_seg{i}.txt",'w') as file:
-			for i in range(len(labelled_seg)):
-				for j in range(len(labelled_seg[0])):
-					for k in range(3):
-						file.write(str(labelled_seg[i][j][k])+',')
-					file.write(' ')
-				file.write('\n')
+    retrieved_images = image_retrieval()
+    # retrieved_images = ["retrieved_fits/image0.fits"]
+    labelled_segs = []
+    for i in range(len(retrieved_images)):
+        labelled_seg = sersic_fitting_process(retrieved_images[i])
+        labelled_segs.append(labelled_seg)
+        with open(f"labelled_segment_maps/labelled_seg{i}.txt",'w') as file:
+            for i in range(len(labelled_seg)):
+                for j in range(len(labelled_seg[0])):
+                    for k in range(3):
+                        file.write(str(labelled_seg[i][j][k])+',')
+                    file.write(' ')
+                file.write('\n')
 
