@@ -17,29 +17,38 @@ def create_parser():
 
         # Handle user input with argparse
     parser = argparse.ArgumentParser(
-        description="Detection flags and options from user.")
+        description            = "Detection flags and options from user.")
     
-    parser.add_argument('-n', '--filename',
+    # input file name (with ra, dec, filter) argument
+    parser.add_argument(
+        '-n', 
+        '--filename',
         dest='filename',
         type=str,
         default=None,
         metavar='filter',
-        required=False)
+        required=False
+    )
     
-    parser.add_argument('-f', '--filter',
+    # specify filter argument
+    parser.add_argument(
+        '-f', '--filter',
         dest='filter',
         default="i",
         metavar='filter',
         required=False,
-        help='Band of desired image.')
+        help='Band of desired image.'
+    )
 
-    parser.add_argument('-q', '--quantity',
-        dest='quantity',
-        type=int,
-        default=10,
-        metavar='filter',
-        required=False)
+    # #specify quantity argument
+    # parser.add_argument('-q', '--quantity',
+    #     dest='quantity',
+    #     type=int,
+    #     default=10,
+    #     metavar='filter',
+    #     required=False)
 
+    # specify ra argument
     parser.add_argument('-r', '--ra',
         dest='ra',
         default=62,
@@ -47,6 +56,7 @@ def create_parser():
         required=False,
         help="Ra of desired image")
 
+    # specify dec argument
     parser.add_argument('-d', '--dec',
         dest='dec',
         default=-37,
@@ -54,6 +64,7 @@ def create_parser():
         required=False,
         help="Dec of desired image")
 
+    # specify whether helpful information should be outputted
     parser.add_argument('-v', '--verbose',
         dest='verbose',
         action='store_true',
@@ -83,17 +94,25 @@ def authenticate():
         service = pyvo.dal.TAPService(RSP_TAP_SERVICE, credential)
         return service
 
-
+from astropy.io import fits
+from astropy import nddata
+import numpy as np
+import matplotlib.pyplot as plt    
+    
+argstemplate = 'morph_cat_template.fits'
+template_hdu = fits.open(argstemplate)
+    
+    
 #######################################
 # main() function
 #######################################
 is_verbose = False
 def image_retrieval():
-    #begin timer
+    # begin timer
     time_global_start = time.time()
-    #create the command line argument parser
+    # create the command line argument parser
     parser = create_parser()
-    #store the command line arguments
+    # store the command line arguments
     args = parser.parse_args()
 
     # authenticate TAPS
@@ -189,12 +208,6 @@ def image_retrieval():
     print(successful_images)
     return successful_images
 
-
-from astropy.io import fits
-from astropy import nddata
-import numpy as np
-import matplotlib.pyplot as plt
-
 def set_up(image_path):
         """Returns image, variance, and a graphable PSF from a provided FITS filepath"""
         hdul = fits.open(image_path)
@@ -211,7 +224,11 @@ def set_up(image_path):
         psf_image = psf_basis_image * psfex_data.data["basis"][0, :, np.newaxis, np.newaxis]
         psf_image = psf_image.sum(0)
         psf_image /= psf_image.sum() * pixstep**2
-
+        
+        # Appending PSF to FITS output
+        image_hdu2 = fits.ImageHDU(data=psf_image, name="PSF")
+        template_hdu.append(image_hdu2)
+        
         if (is_verbose):
                 # Plotting Retrieved FITS Image
                 plt.imshow(image.data, vmin=0, vmax=0.3,origin="lower", cmap="gray")
@@ -298,90 +315,149 @@ def cutout_sersic_fitting(segment_map, cutouts):
     from pysersic.results import plot_residual
     from jax.random import PRNGKey
 
-    labelled_seg = np.zeros((segment_map.shape[0],segment_map.shape[1],3))
-    mis_match_count = 0
-    for i in range(len(cutouts)):
-                im,im_data,mask,sig,psf,label = cutouts[i] # image, mask, variance, psf
-                if (im_data.shape[0] != im_data.shape[1]):
-                        print('This should not happen.')
-                        print(im.data.shape)
-                        mis_match_count+=1
-                else:
-                        check_input_data(im_data, sig, psf, mask)
-                        # Prior Estimation of Parameters
-                        props = SourceProperties(im_data,mask=mask) 
-                        prior = props.generate_prior('sersic',sky_type='none')
+    # labelled_seg = np.zeros((segment_map.shape[0],segment_map.shape[1],3))
+    mis_match_count = 0 # delete soon
+    
+    ##############################################
+    # Initializing FITS file for output ---------#
+    ##############################################
+    # creating fits template
+    idxh = {'PRIMARY':0, 'STAT_TABLE':1}
 
-                        # Fit
-                        try:
-                            fitter = FitSingle(data=im_data,rms=sig, psf=psf, prior=prior, mask=mask, loss_func=gaussian_loss) 
-                            map_params = fitter.find_MAP(rkey = PRNGKey(1000));               # contains dictionary of Sersic values
-                            # fig, ax = plot_residual(im.data,map_params['model'],mask=mask,vmin=-1,vmax=1);
-                            # fig.suptitle("Analysis of Fit")
+    n_obj = 100 # len(cutouts) # number of sources
+    primary_hdu          = template_hdu[idxh['PRIMARY']]
+    stats_template       = template_hdu[idxh['STAT_TABLE']].data
+    stats_cat            = fits.FITS_rec.from_columns(stats_template.columns, nrows=n_obj, fill=True)
+    
+    ##############################################
+    # Sersic Fitting Each Cutout ----------------#
+    ##############################################
+    for i in range(n_obj):
+        im,im_data,mask,sig,psf,label = cutouts[i] # image, mask, variance, psf
+        if (im_data.shape[0] != im_data.shape[1]):
+                print('This should not happen.')
+                print(im.data.shape)
+                mis_match_count+=1
+        else:
+                check_input_data(im_data, sig, psf, mask)
+                # Prior Estimation of Parameters
+                props = SourceProperties(im_data,mask=mask) 
+                prior = props.generate_prior('sersic',sky_type='none')
 
-                            ##############################################
-                            # Testing Fit -------------------------------#
-                            # (does it belong in training dataset)
-                            ##############################################
-                            image = im_data
-                            model = map_params['model']
-                            assert(image.shape == model.shape)
+                # Fit
+                # try:
+                fitter = FitSingle(data=im_data,rms=sig, psf=psf, prior=prior, mask=mask, loss_func=gaussian_loss) 
+                map_params = fitter.find_MAP(rkey = PRNGKey(1000));               # contains dictionary of Sersic values
+                # fig, ax = plot_residual(im.data,map_params['model'],mask=mask,vmin=-1,vmax=1);
+                # fig.suptitle("Analysis of Fit")
 
-                            # Chi-squared Statistic ----------------------------------------------------------------#
-                            # (evaluating whether the difference in Image and Model is systematic or due to noise)
+                ##############################################
+                # Testing Fit -------------------------------#
+                ##############################################
+                image = im_data
+                #xc,yc,flux,r_eff,n,ellip,theta,model = map_params
+                xc = map_params["xc"]
+                yc = map_params["yc"]
+                flux = map_params["flux"]
+                r_eff = map_params["r_eff"]
+                n = map_params["n"]
+                ellip = map_params["ellip"]
+                theta = map_params["theta"]
+                model = map_params["model"]
+                print(type(image))
+                print(type(model))
+                assert(image.shape == model.shape)
 
-                            from scipy.stats import chi2
-                            chi_square = np.sum((image*2.2 - model) ** 2 / (model))
-                            df = image.size-1                                                 # number of categories - 1
-                            p_value = chi2.sf(chi_square, df)
+                # Chi-squared Statistic ----------------------------------------------------------------#
+                # (evaluating whether the difference in Image and Model is systematic or due to noise)
+                from scipy.stats import chi2
 
-                            ##############################################
-                            # Labelling the Segmap ----------------------#
-                            ##############################################
-                            n = map_params['n']
-                            print(n)
-                            print(p_value)
-                            print(label)
-                            
-                            print(im.xmin_original, im.xmax_original, im.ymin_original, im.ymax_original)
-                            for xpos in range(im.xmin_original, im.xmax_original,1):
-                                for ypos in range(im.ymin_original, im.ymax_original,1):
-                                    if (xpos < 4100 and ypos < 4200): # verify these the image dimensions for all cutouts (why not a square ?)
-                                        labelled_seg[xpos][ypos] = [label, n, p_value]
-                        except Exception as error:
-                                print(f"error with image number {i}.")
-                                print(f"Error: {error}")
-    return labelled_seg
+                chi_square           = np.sum((image*2.2 - model) ** 2 / (model))
+                df                   = image.size-1                                                 # number of categories - 1
+                p_value              = chi2.sf(chi_square, df)
 
+                #L1-Norm 
+                noise_threshold      = np.mean(sig.data)                               
+                image_1D             = image.flatten()
+                model_1D             = model.flatten()
+                difference_1D        = image_1D - model_1D
+
+                l1 = np.sum(np.abs(difference_1D))
+                l1_normalized        = l1/(image_1D.size)
+                l1_var_difference    = l1_normalized - noise_threshold
+                print(f"L1 norm: {l1_normalized}")
+
+
+                ##############################################
+                # Labelling the Segmap ----------------------# ARCHAIC
+                ##############################################
+                # print(n)
+                # print(p_value)
+                # print(label)
+                # print(im.xmin_original, im.xmax_original, im.ymin_original, im.ymax_original)
+                # for xpos in range(im.xmin_original, im.xmax_original,1):
+                #     for ypos in range(im.ymin_original, im.ymax_original,1):
+                #         if (xpos < 4100 and ypos < 4200): # verify these the image dimensions for all cutouts (why not a square ?)
+                #             labelled_seg[xpos][ypos] = [label, n, p_value]
+
+                ##############################################
+                # Creating a FITS image with relevant data --#
+                ##############################################
+                x,y            = im.center_cutout
+                ccols          = [label,x,y] #id, x, y
+                morph_params = [xc, yc, flux, n, r_eff, ellip, theta]
+                for k in morph_params:
+                    print(type(k), end='')
+                # morph_params   = [float(xc),float(yc),float(flux),float(n),float(r_eff),float(ellip),float(theta)]
+                print(r_eff, ellip)
+                stats          = [p_value,l1_var_difference]
+                values         = ccols + morph_params + stats
+
+                for j in range(len(values)):
+                    stats_cat[i][j] = values[j]
+
+                # except Exception as error:
+                #         print(f"error with image number {i}.")
+                #         print(f"Error: {error}")
+
+    template_hdu[idxh['STAT_TABLE']].data = stats_cat
+    return template_hdu
                                 
-def sersic_fitting_process(image_path):
-        time_global_start = time.time()
-        image, variance, psf = set_up(image_path)
-        segment_map = identify_sources(image)
-        cutouts = create_cutouts(segment_map, image, variance, psf)
-        labelled_segment_map = cutout_sersic_fitting(segment_map, cutouts)
-        time_global_end = time.time()
-        if(is_verbose):
-                print("Time to perform sersic fitting: %d"%(time_global_end-time_global_start))
-        return labelled_segment_map
-
+def sersic_fitting_process(image_path, i):
+        time_global_start         = time.time()
+        image, variance, psf      = set_up(image_path)
+        segment_map               = identify_sources(image)
+        cutouts                   = create_cutouts(segment_map, image, variance, psf)
+        template_hdu              = cutout_sersic_fitting(segment_map, cutouts)
+        
+        np.save(f'seg{i}.npy',segment_map.data)
+        template_hdu.writeto(f'morph-stats{i}.fits',overwrite=True)
+        with fits.open(f'morph-stats{i}.fits') as hdul:
+            hdul.info()
+            print(hdul[1].data)
+        
+        time_global_end           = time.time()
+        if(is_verbose): print("Time to perform sersic fitting: %d"%(time_global_end-time_global_start))
 
 
 #######################################
 # Run the program
 #######################################
 if __name__=="__main__":
-    retrieved_images = image_retrieval()
-    # retrieved_images = ["retrieved_fits/image0.fits"]
+    # retrieved_images = image_retrieval()
+    retrieved_images = ["retrieved_fits/image0.fits"]
     labelled_segs = []
     for i in range(len(retrieved_images)):
-        labelled_seg = sersic_fitting_process(retrieved_images[i])
-        labelled_segs.append(labelled_seg)
-        with open(f"labelled_segment_maps/labelled_seg{i}.txt",'w') as file:
-            for i in range(len(labelled_seg)):
-                for j in range(len(labelled_seg[0])):
-                    for k in range(3):
-                        file.write(str(labelled_seg[i][j][k])+',')
-                    file.write(' ')
-                file.write('\n')
+        sersic_fitting_process(retrieved_images[i], i)
+                
+            
+        # labelled_seg = sersic_fitting_process(retrieved_images[i])
+        # labelled_segs.append(labelled_seg)
+        # with open(f"labelled_segment_maps/labelled_seg{i}.txt",'w') as file:
+        #     for i in range(len(labelled_seg)):
+        #         for j in range(len(labelled_seg[0])):
+        #             for k in range(3):
+        #                 file.write(str(labelled_seg[i][j][k])+',')
+        #             file.write(' ')
+        #         file.write('\n')
 
