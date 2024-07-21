@@ -17,7 +17,7 @@ def create_parser():
 
         # Handle user input with argparse
     parser = argparse.ArgumentParser(
-        description            = "Detection flags and options from user.")
+    description            = "Detection flags and options from user.")
     
     # input file name (with ra, dec, filter) argument
     parser.add_argument(
@@ -39,14 +39,6 @@ def create_parser():
         required=False,
         help='Band of desired image.'
     )
-
-    # #specify quantity argument
-    # parser.add_argument('-q', '--quantity',
-    #     dest='quantity',
-    #     type=int,
-    #     default=10,
-    #     metavar='filter',
-    #     required=False)
 
     # specify ra argument
     parser.add_argument('-r', '--ra',
@@ -108,6 +100,7 @@ template_hdu = fits.open(argstemplate)
 #######################################
 is_verbose = False
 def image_retrieval():
+    import json
     # begin timer
     time_global_start = time.time()
     # create the command line argument parser
@@ -127,19 +120,13 @@ def image_retrieval():
             try:
                 print("Opening provided file...")
                 with open(args.filename, 'r') as file:
-                    # Read and print the contents of the file
-                    content = file.read()
-                    sets = content.split('\n')
-                    for i in sets:
-                        triple = i.split()
-                        if (len(triple) == 3):
-                            ra.append(float(triple[0]))
-                            dec.append(float(triple[1]))
-                            filter.append(triple[2])
-                            iterations+=1
-                    # set iterations
-                    # have a list for filter, ra, and dec 
-                    # if filename not provided then those lists are just the args ra dec 
+                    data = json.load(file)
+                    input_list = data["values"]
+                    for element in input_list:
+                        ra.append(float(element["ra"]))
+                        dec.append(float(element["dec"]))
+                        filter.append(element["filter"])
+                        iterations+=1
             except FileNotFoundError:
                 print(f"Error: The file '{args.filename}' does not exist.")
             except Exception as e:
@@ -280,7 +267,6 @@ def create_cutouts(segment_map, image, variance, psf):
         bbox = segment_map.bbox
         labels = segment_map.labels
         assert(len(bbox) == len(labels))
-        
         if(is_verbose): print("Creating cutouts...")
         cutouts = []
         for i in range(len(bbox)):
@@ -324,7 +310,7 @@ def cutout_sersic_fitting(segment_map, cutouts):
     # creating fits template
     idxh = {'PRIMARY':0, 'STAT_TABLE':1}
 
-    n_obj = 100 # len(cutouts) # number of sources
+    n_obj = len(cutouts) # number of sources
     primary_hdu          = template_hdu[idxh['PRIMARY']]
     stats_template       = template_hdu[idxh['STAT_TABLE']].data
     stats_cat            = fits.FITS_rec.from_columns(stats_template.columns, nrows=n_obj, fill=True)
@@ -345,80 +331,62 @@ def cutout_sersic_fitting(segment_map, cutouts):
                 prior = props.generate_prior('sersic',sky_type='none')
 
                 # Fit
-                # try:
-                fitter = FitSingle(data=im_data,rms=sig, psf=psf, prior=prior, mask=mask, loss_func=gaussian_loss) 
-                map_params = fitter.find_MAP(rkey = PRNGKey(1000));               # contains dictionary of Sersic values
-                # fig, ax = plot_residual(im.data,map_params['model'],mask=mask,vmin=-1,vmax=1);
-                # fig.suptitle("Analysis of Fit")
+                try:
+                    fitter = FitSingle(data=im_data,rms=sig, psf=psf, prior=prior, mask=mask, loss_func=gaussian_loss) 
+                    map_params = fitter.find_MAP(rkey = PRNGKey(1000));               # contains dictionary of Sersic values
+                    # fig, ax = plot_residual(im.data,map_params['model'],mask=mask,vmin=-1,vmax=1);
+                    # fig.suptitle("Analysis of Fit")
 
-                ##############################################
-                # Testing Fit -------------------------------#
-                ##############################################
-                image = im_data
-                #xc,yc,flux,r_eff,n,ellip,theta,model = map_params
-                xc = map_params["xc"]
-                yc = map_params["yc"]
-                flux = map_params["flux"]
-                r_eff = map_params["r_eff"]
-                n = map_params["n"]
-                ellip = map_params["ellip"]
-                theta = map_params["theta"]
-                model = map_params["model"]
-                print(type(image))
-                print(type(model))
-                assert(image.shape == model.shape)
+                    ##############################################
+                    # Testing Fit -------------------------------#
+                    ##############################################
+                    image = im_data
+                    #xc,yc,flux,r_eff,n,ellip,theta,model = map_params
+                    xc = map_params["xc"]
+                    yc = map_params["yc"]
+                    flux = map_params["flux"]
+                    r_eff = map_params["r_eff"]
+                    n = map_params["n"]
+                    ellip = map_params["ellip"]
+                    theta = map_params["theta"]
+                    model = map_params["model"]
+                    assert(image.shape == model.shape)
 
-                # Chi-squared Statistic ----------------------------------------------------------------#
-                # (evaluating whether the difference in Image and Model is systematic or due to noise)
-                from scipy.stats import chi2
+                    # Chi-squared Statistic ----------------------------------------------------------------#
+                    # (evaluating whether the difference in Image and Model is systematic or due to noise)
+                    from scipy.stats import chi2
 
-                chi_square           = np.sum((image*2.2 - model) ** 2 / (model))
-                df                   = image.size-1                                                 # number of categories - 1
-                p_value              = chi2.sf(chi_square, df)
+                    chi_square           = np.sum((image*2.2 - model) ** 2 / (model))
+                    df                   = image.size-1                                                 # number of categories - 1
+                    p_value              = chi2.sf(chi_square, df)
 
-                #L1-Norm 
-                noise_threshold      = np.mean(sig.data)                               
-                image_1D             = image.flatten()
-                model_1D             = model.flatten()
-                difference_1D        = image_1D - model_1D
+                    #L1-Norm 
+                    noise_threshold      = np.mean(sig.data)                               
+                    image_1D             = image.flatten()
+                    model_1D             = model.flatten()
+                    difference_1D        = image_1D - model_1D
 
-                l1 = np.sum(np.abs(difference_1D))
-                l1_normalized        = l1/(image_1D.size)
-                l1_var_difference    = l1_normalized - noise_threshold
-                print(f"L1 norm: {l1_normalized}")
+                    l1 = np.sum(np.abs(difference_1D))
+                    l1_normalized        = l1/(image_1D.size)
+                    l1_var_difference    = l1_normalized - noise_threshold
+                    print(f"L1 norm: {l1_normalized}")
 
+                    ##############################################
+                    # Creating a FITS image with relevant data --#
+                    ##############################################
+                    x,y            = im.center_cutout
+                    ccols          = [label,x,y] #id, x, y
+                    morph_params = [xc, yc, flux, n, r_eff, ellip, theta]
+                    # morph_params   = [float(xc),float(yc),float(flux),float(n),float(r_eff),float(ellip),float(theta)]
+                    stats          = [p_value,l1_var_difference]
+                    values         = ccols + morph_params + stats
 
-                ##############################################
-                # Labelling the Segmap ----------------------# ARCHAIC
-                ##############################################
-                # print(n)
-                # print(p_value)
-                # print(label)
-                # print(im.xmin_original, im.xmax_original, im.ymin_original, im.ymax_original)
-                # for xpos in range(im.xmin_original, im.xmax_original,1):
-                #     for ypos in range(im.ymin_original, im.ymax_original,1):
-                #         if (xpos < 4100 and ypos < 4200): # verify these the image dimensions for all cutouts (why not a square ?)
-                #             labelled_seg[xpos][ypos] = [label, n, p_value]
+                    for j in range(len(values)):
+                        stats_cat[i][j] = values[j]
 
-                ##############################################
-                # Creating a FITS image with relevant data --#
-                ##############################################
-                x,y            = im.center_cutout
-                ccols          = [label,x,y] #id, x, y
-                morph_params = [xc, yc, flux, n, r_eff, ellip, theta]
-                for k in morph_params:
-                    print(type(k), end='')
-                # morph_params   = [float(xc),float(yc),float(flux),float(n),float(r_eff),float(ellip),float(theta)]
-                print(r_eff, ellip)
-                stats          = [p_value,l1_var_difference]
-                values         = ccols + morph_params + stats
-
-                for j in range(len(values)):
-                    stats_cat[i][j] = values[j]
-
-                # except Exception as error:
-                #         print(f"error with image number {i}.")
-                #         print(f"Error: {error}")
+                except Exception as error:
+                        print(f"error with image number {i}.")
+                        print(f"Error: {error}")
 
     template_hdu[idxh['STAT_TABLE']].data = stats_cat
     return template_hdu
@@ -429,10 +397,9 @@ def sersic_fitting_process(image_path, i):
         segment_map               = identify_sources(image)
         cutouts                   = create_cutouts(segment_map, image, variance, psf)
         template_hdu              = cutout_sersic_fitting(segment_map, cutouts)
-        
-        np.save(f'seg{i}.npy',segment_map.data)
-        template_hdu.writeto(f'morph-stats{i}.fits',overwrite=True)
-        with fits.open(f'morph-stats{i}.fits') as hdul:
+        np.save(f'sersic_output/seg{i}.npy',segment_map.data)
+        template_hdu.writeto(f'sersic_output/morph-stats{i}.fits',overwrite=True)
+        with fits.open(f'sersic_output/morph-stats{i}.fits') as hdul:
             hdul.info()
             print(hdul[1].data)
         
@@ -444,20 +411,9 @@ def sersic_fitting_process(image_path, i):
 # Run the program
 #######################################
 if __name__=="__main__":
-    # retrieved_images = image_retrieval()
-    retrieved_images = ["retrieved_fits/image0.fits"]
+    retrieved_images = image_retrieval()
+    # retrieved_images = ["retrieved_fits/image0.fits"]
     labelled_segs = []
     for i in range(len(retrieved_images)):
         sersic_fitting_process(retrieved_images[i], i)
                 
-            
-        # labelled_seg = sersic_fitting_process(retrieved_images[i])
-        # labelled_segs.append(labelled_seg)
-        # with open(f"labelled_segment_maps/labelled_seg{i}.txt",'w') as file:
-        #     for i in range(len(labelled_seg)):
-        #         for j in range(len(labelled_seg[0])):
-        #             for k in range(3):
-        #                 file.write(str(labelled_seg[i][j][k])+',')
-        #             file.write(' ')
-        #         file.write('\n')
-
