@@ -1,5 +1,6 @@
 # How to Run
 "/sersic_output" will contain the segmentation maps (.npy) and a FITS file with sersic fit information and the PSF (.fits).
+
 "/retrieved_fits" will contain FITS image files retrieved from the Rubin Science platform. You will need your own Rubin API key to retrieve the images. This will be able to be provided as a command line option soon.
 ```
 cd program
