@@ -1,6 +1,6 @@
 # Authors: Sierra Janson
 # Affiated with: Brant Robertson
-# Date: 05/23/2024 - 07/09/2024
+# Date: 05/23/2024 - 07/23/2024
 
 import os
 import argparse
@@ -62,29 +62,46 @@ def create_parser():
         action='store_true',
         help='Print helpful information to the screen? (default: False)',
         default=False)
+    
+    # specify path to file with Rubin API token
+    parser.add_argument('-t', '--tokenfilepath',
+        dest='tokenfilepath',
+        type=str,
+        required=False,
+        help='Provide path to file with Rubin API token',
+        default=None)
 
     return parser
 
 #######################################
 # authenticate() function
 #######################################
-def authenticate():
+def authenticate(tokenfilepath):
         # follow instructions from RSP below to set up the API and retrieve your own token
         # ENSURE you keep your token private
         # https://dp0-2.lsst.io/data-access-analysis-tools/api-intro.html
-
         RSP_TAP_SERVICE = 'https://data.lsst.cloud/api/tap'
-        homedir = os.path.expanduser('~')
-        secret_file_name = ".rsp-tap.token" 
-        assert(secret_file_name != "")
-        token_file = os.path.join(homedir,secret_file_name)
-        with open(token_file, 'r') as f:
-            token_str = f.readline()
-        cred = pyvo.auth.CredentialStore()
-        cred.set_password("x-oauth-basic", token_str)
-        credential = cred.get("ivo://ivoa.net/sso#BasicAA")
-        service = pyvo.dal.TAPService(RSP_TAP_SERVICE, credential)
-        return service
+        token_file = ''
+
+        # if a file path was provided
+        try:
+            if (tokenfilepath != None): 
+                token_file = tokenfilepath
+            else:
+                homedir = os.path.expanduser('~')
+                secret_file_name = ".rsp-tap.token" 
+                token_file = os.path.join(homedir,secret_file_name)
+            with open(token_file, 'r') as f:
+                token_str = f.readline()
+            cred = pyvo.auth.CredentialStore()
+            cred.set_password("x-oauth-basic", token_str)
+            credential = cred.get("ivo://ivoa.net/sso#BasicAA")
+            service = pyvo.dal.TAPService(RSP_TAP_SERVICE, credential)
+            return service
+        except FileNotFoundError:
+            raise Exception("The path you provided is not recognized by the system.")
+        except:
+            raise Exception("Something failed while attempting to set up the API. This may be because you are not using a Linux system. In which case you will have to alter the 'authenticate()' function in the code yourself, until I adjust this.")
 
 from astropy.io import fits
 from astropy import nddata
@@ -109,7 +126,7 @@ def image_retrieval():
     args = parser.parse_args()
 
     # authenticate TAPS
-    service = authenticate()
+    service = authenticate(args.tokenfilepath)
 
     ra = []
     dec = []
