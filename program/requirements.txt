@@ -7,3 +7,4 @@ os
 opencv-python
 photutils
 jax
+scikit-image
