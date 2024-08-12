@@ -14,8 +14,8 @@ import numpy as np
 import matplotlib.pyplot as plt    
 
 # print("YOU ARE USING A BUFFER SINCE EXISTING IMAGE SCRIPT HASN'T BEEN WRITTEN YET")
-# BUFFER = 6
-FLUX_IMG_SHAPE = (4200,4100)                        
+BUFFER = 9
+FLUX_IMG_SHAPE = (4100,4200)                        
 
 
 #######################################
@@ -294,39 +294,37 @@ def set_up(image_path):
         image_hdu2 = fits.ImageHDU(data=psf_image, name="PSF")
         template_hdu.append(image_hdu2)
         
-        if (is_verbose):
-                # Plotting Retrieved FITS Image
-                plt.imshow(image.data, vmin=0, vmax=0.3,origin="lower", cmap="gray")
-                plt.title('Original Image Array')
-                plt.show()
+#         if (is_verbose):
+#                 # Plotting Retrieved FITS Image
+#                 plt.imshow(image.data, vmin=0, vmax=0.3,origin="lower", cmap="gray")
+#                 plt.title('Original Image Array')
+#                 plt.show()
 
-                # Plotting PSF
-                plt.imshow(psf_image, cmap='gray', interpolation='none',vmin=-0.0001, vmax=0.0001)
-                plt.xlabel('X-axis')
-                plt.ylabel('Y-axis')
-                plt.show()
+#                 # Plotting PSF
+#                 plt.imshow(psf_image, cmap='gray', interpolation='none',vmin=-0.0001, vmax=0.0001)
+#                 plt.xlabel('X-axis')
+#                 plt.ylabel('Y-axis')
+#                 plt.show()
         return image, variance, psf_image, template_hdu
 
-def identify_sources(image, threshold=1.9):
+def identify_sources(variance, image, threshold=25):
         """identify sources in fits image by threshold of how bright they are with respect to background RMS"""
-        from photutils.background   import Background2D, MedianBackground
+        # from photutils.background   import Background2D, MedianBackground
         from astropy.convolution    import convolve
-        from astropy.convolution    import Gaussian2DKernel
         from photutils.segmentation import detect_sources
+        from photutils.segmentation import make_2dgaussian_kernel # not comptabile with py 3.7
         
-        # from photutils.segmentation import make_2dgaussian_kernel not comptabile with py 3.7
-        # kernel = make_2dgaussian_kernel(3.0, size=5)  # FWHM = 3.0
+        # kernel rounds out sources making them appear cleaner
+        kernel           = make_2dgaussian_kernel(3.0, size=5)  # FWHM = 3.0
+        convolved_img    = convolve(image, kernel)
         
-        bkg_estimator    = MedianBackground()
-        bkg              = Background2D(image, (50, 50), filter_size=(3, 3), bkg_estimator=bkg_estimator)
-        threshold        = threshold * bkg.background_rms 
-        stddev           = 3/(2.35482)
-        kernel           = Gaussian2DKernel(stddev, x_size=5, y_size=5)   
-        convolved_data   = convolve(image, kernel)
-        segment_map      = detect_sources(convolved_data, threshold, npixels=10)
+        bkg              = np.median(variance)       # perhaps change to rms of bkg
+        threshold        = threshold * bkg 
+
+        segment_map      = detect_sources(convolved_img, threshold, npixels=10)
         
         # removing sources within 10 pixels of border to improve quality of training_dataset
-        segment_map.remove_border_labels(10, partial_overlap=False, relabel=True)
+        # segment_map.remove_border_labels(10, partial_overlap=False, relabel=True)
         return segment_map
 
 
@@ -355,6 +353,13 @@ def gen_psf(image_shape):
     return psf
     
 
+def smooth_seg(segment_map):
+    """expands boundaries around all sources by 5 pixels"""
+    from skimage.segmentation import expand_labels
+    segmap = np.array(segment_map.data)
+    return expand_labels(segmap,distance=5)
+
+    
 def create_cutouts(segment_map, image, variance, psf):
         """create same dimension cutouts around sources in the image & the variance & psf image"""
         import jax.numpy as jnp
@@ -363,8 +368,11 @@ def create_cutouts(segment_map, image, variance, psf):
         bbox = segment_map.bbox
         # grab source ids
         labels = segment_map.labels
-        # initialize mask imgae
-        mask_img = np.logical_not(segment_map.data)
+        
+        segmap_data = smooth_seg(segment_map)
+        
+        # initialize mask image
+        mask_img = np.logical_not(segmap_data)
 
         # the number of cutouts and the number of labels should always be the same
         assert(len(bbox) == len(labels))
@@ -378,61 +386,61 @@ def create_cutouts(segment_map, image, variance, psf):
                 x_len,y_len = bbox[i].shape
                 min_length = 12 #22
                 
-                if (x_len> 10 and y_len > 10 and x_len < 40 and y_len < 40):
-                        length        = max([x_len, y_len, min_length]) * 1.25
-                        cutout_img    = nddata.Cutout2D(image, (x_center,y_center), int(length))
-                        
-                        cutout_length = max(cutout_img.shape[0], cutout_img.shape[1])
-                        cutout_shape  = (cutout_length,cutout_length)
-                    
-                        # make mask out of segmentation map cutout
-                        xs, ys        = cutout_img.slices_original
-                        xmin, xmax    = xs.start, xs.stop
-                        ymin, ymax    = ys.start, ys.stop
+                # if (x_len> 10 and y_len > 10 and x_len < 40 and y_len < 40):
+                length        = max([x_len, y_len, min_length]) * 1.25
+                cutout_img    = nddata.Cutout2D(image, (x_center,y_center), int(length))
 
-                        # if the image is not a square
-                        if (cutout_img.data.shape[0] != cutout_img.data.shape[1]):
-                            
-                            def recrop(image, x_len, y_len, length):
-                                lchange = length//2
-                                rchange = length//2 + length%2
-                                if (x_len < y_len): # x < y
-                                    if (xmin - lchange < 0 or xmax + rchange >= FLUX_IMG_SHAPE[1]):
-                                        difference = y_len - x_len
-                                        lchange = difference//2
-                                        rchange = difference//2 + difference%2
-                                        return image[xmin:xmax, ymin+lchange:ymax-rchange]
+                cutout_length = max(cutout_img.shape[0], cutout_img.shape[1])
+                cutout_shape  = (cutout_length,cutout_length)
 
-                                    return image[xmin-lchange: xmax+rchange, ymin:ymax]
+                # make mask out of segmentation map cutout
+                xs, ys        = cutout_img.slices_original
+                xmin, xmax    = xs.start, xs.stop
+                ymin, ymax    = ys.start, ys.stop
 
-                                else: # dimension == "y" <--> y < x
-                                    if (ymin - lchange < 0 or ymax + rchange >= FLUX_IMG_SHAPE[1]):
-                                        difference = x_len - y_len
-                                        lchange = difference//2
-                                        rchange = difference//2 + difference%2
-                                        return image[xmin+lchange:xmax-rchange, ymin:ymax]
+                # if the image is not a square
+                if (cutout_img.data.shape[0] != cutout_img.data.shape[1]):
 
-                                    return image[xmin:xmax, ymin-lchange: ymax+rchange]
-                                
-                            x_len = cutout_img.data.shape[0]
-                            y_len = cutout_img.data.shape[1]
-                            y_gt_x = x_len < y_len
-                            if (y_gt_x): # if y is greater
-                                img_data              = recrop(image, x_len, y_len, cutout_length) 
-                                resized_var           = recrop(variance, x_len, y_len, cutout_length)
-                                resized_seg_cutout    = recrop(segment_map.data, x_len, y_len, cutout_length)
-                                resized_mask          = jnp.array(resized_seg_cutout != labels[i])  # if segment_map == source_id = False (0) else True (1)
-                                actual_psf    = resize_image(psf, img_data.shape)
-                                assert(resized_mask.shape == img_data.shape)
-                                package              = [cutout_img, img_data, resized_mask, resized_var, actual_psf, labels[i]] 
-                                cutouts.append(package)
-                        else: # cutout is square
-                            seg_cutout    = segment_map.data[xmin:xmax,ymin:ymax]
-                            cutout_mask   = jnp.array(seg_cutout != labels[i])  # if segment_map == source_id = False (0) else True (1)
-                            actual_psf    = resize_image(psf, cutout_shape) # before not reversed
-                            cutout_var    = nddata.Cutout2D(variance, (x_center,y_center), int(length))
-                            package       = [cutout_img,cutout_img.data, cutout_mask, cutout_var.data, actual_psf,labels[i]] 
-                            cutouts.append(package)
+                    def recrop(image, x_len, y_len, length):
+                        lchange = length//2
+                        rchange = length//2 + length%2
+                        if (x_len < y_len): # x < y
+                            if (xmin - lchange < 0 or xmax + rchange >= FLUX_IMG_SHAPE[1]):
+                                difference = y_len - x_len
+                                lchange = difference//2
+                                rchange = difference//2 + difference%2
+                                return image[xmin:xmax, ymin+lchange:ymax-rchange]
+
+                            return image[xmin-lchange: xmax+rchange, ymin:ymax]
+
+                        else: # dimension == "y" <--> y < x
+                            if (ymin - lchange < 0 or ymax + rchange >= FLUX_IMG_SHAPE[1]):
+                                difference = x_len - y_len
+                                lchange = difference//2
+                                rchange = difference//2 + difference%2
+                                return image[xmin+lchange:xmax-rchange, ymin:ymax]
+
+                            return image[xmin:xmax, ymin-lchange: ymax+rchange]
+
+                    x_len = cutout_img.data.shape[0]
+                    y_len = cutout_img.data.shape[1]
+                    y_gt_x = x_len < y_len
+                    if (y_gt_x): # if y is greater
+                        img_data              = recrop(image, x_len, y_len, cutout_length) 
+                        resized_var           = recrop(variance, x_len, y_len, cutout_length)
+                        resized_seg_cutout    = recrop(segmap_data, x_len, y_len, cutout_length)
+                        resized_mask          = jnp.array(resized_seg_cutout != labels[i])  # if segment_map == source_id = False (0) else True (1)
+                        actual_psf            = resize_image(psf, img_data.shape)
+                        assert(resized_mask.shape == img_data.shape)
+                        package               = [cutout_img, img_data, resized_mask, resized_var, actual_psf, labels[i]] 
+                        cutouts.append(package)
+                else: # cutout is square
+                    seg_cutout    = segmap_data[xmin:xmax,ymin:ymax]
+                    cutout_mask   = jnp.array(seg_cutout != labels[i])  # if segment_map == source_id = False (0) else True (1)
+                    actual_psf    = resize_image(psf, cutout_shape) # before not reversed
+                    cutout_var    = nddata.Cutout2D(variance, (x_center,y_center), int(length))
+                    package       = [cutout_img,cutout_img.data, cutout_mask, cutout_var.data, actual_psf,labels[i]] 
+                    cutouts.append(package)
         return cutouts
 
 def determine_class(n):
@@ -465,9 +473,9 @@ def cutout_sersic_fitting(template_hdu, cutouts):
     ##############################################
     # creating fits template
     idxh = {'PRIMARY':0, 'STAT_TABLE':1}
-
+    
     n_obj = len(cutouts) # number of sources
-   
+    
     primary_hdu          = template_hdu[idxh['PRIMARY']]
     stats_template       = template_hdu[idxh['STAT_TABLE']].data
     stats_cat            = fits.FITS_rec.from_columns(stats_template.columns, nrows=n_obj, fill=True)
@@ -541,8 +549,15 @@ def cutout_sersic_fitting(template_hdu, cutouts):
             x_coords, y_coords = np.where(segmap_cutout == 1)
             coords = zip(x_coords, y_coords) 
             for (x,y) in coords:
-                    if (x+xmin > 4100 or y+ymin>4100): print('yikes')
+                    if (x+xmin > 4100 or y+ymin>4200): print('yikes')
                     layers[n_class].data[x+xmin,y+ymin] = n_class
+                    
+            # writing background class
+            bg_x_coords,bg_y_coords = np.where(segmap_cutout == 0)
+            bg_coords = zip(bg_x_coords, bg_y_coords)
+            for (x,y) in bg_coords:
+                if (x+xmin > 4100 or y+ymin>4200): print('yikes')
+                    layers[5].data[x+xmin,y+ymin] = 1
 
 
             # writing this to specific layer in FITS image 
@@ -592,9 +607,9 @@ def sersic_fitting_process(args, image_path, i):
         
         # process:
         image, variance, psf, template_hdu    = set_up(image_path)                                            # grabbing image, variance, psf, and output file template
-        segment_map                           = identify_sources(image)                                       # grabbing segmentation map (with source-ids)
+        segment_map                           = identify_sources(variance, image)                             # grabbing segmentation map (with source-ids)
         cutouts                               = create_cutouts(segment_map, image, variance, psf)             # create cutouts of flux image, mask, psf, variance
-        template_hdu, segmap_hdul             = cutout_sersic_fitting(template_hdu, cutouts)     # fit each cutout with sersic values and save to template_hdu
+        template_hdu, segmap_hdul             = cutout_sersic_fitting(template_hdu, cutouts)                  # fit each cutout with sersic values and save to template_hdu
         
         path = args.outputpath
         
@@ -603,16 +618,15 @@ def sersic_fitting_process(args, image_path, i):
             print(f'Path:"{path}" did not exist, but it does now.')
 
         # writing to disk: 
-        np.save(f'{path}/seg{i+BUFFER}.npy',segment_map.data)                        # writing segmentation map (.npy) to disk
-        template_hdu.writeto(f'{path}/morph-stats{i+BUFFER}.fits',overwrite=True)    # writing sersic values to disk
-        
-        segmap_hdul.writeto(f"{path}/labelled_segmap{i+BUFFER}.fits", overwrite=True) # writting labelled segmap to disk
+        np.save(f'{path}/seg{i+BUFFER}.npy',smooth_seg(segment_map))                    # writing segmentation map (.npy) to disk
+        template_hdu.writeto(f'{path}/morph-stats{i+BUFFER}.fits',overwrite=True)       # writing sersic values to disk
+        segmap_hdul.writeto(f"{path}/labelled_segmap{i+BUFFER}.fits", overwrite=True)   # writting labelled segmap to disk
 
-        with fits.open(f'{path}/morph-stats{i+BUFFER}.fits') as hdul:                # open and print stats table for verification
+        
+        with fits.open(f'{path}/morph-stats{i+BUFFER}.fits') as hdul:                   # open and print stats table for verification
             hdul.info()
             print(hdul[1].data)
         
-       
         time_global_end = time.time()
         if(is_verbose): print("Time to perform sersic fitting: %d"%(time_global_end-time_global_start))
 
