@@ -13,8 +13,7 @@ from astropy import nddata
 import numpy as np
 import matplotlib.pyplot as plt    
 
-# print("YOU ARE USING A BUFFER SINCE EXISTING IMAGE SCRIPT HASN'T BEEN WRITTEN YET")
-BUFFER = 9
+BUFFER = 11
 FLUX_IMG_SHAPE = (4100,4200)                        
 
 
@@ -313,19 +312,28 @@ def identify_sources(variance, image, threshold=25):
         from astropy.convolution    import convolve
         from photutils.segmentation import detect_sources
         from photutils.segmentation import make_2dgaussian_kernel # not comptabile with py 3.7
+        from photutils.segmentation import deblend_sources
+        from skimage.morphology import binary_opening
+
+        # deblend sources to prevent overlapping sources in cutouts
         
-        # kernel rounds out sources making them appear cleaner
-        kernel           = make_2dgaussian_kernel(3.0, size=5)  # FWHM = 3.0
-        convolved_img    = convolve(image, kernel)
-        
+#         # kernel rounds out sources making them appear cleaner
+#         kernel           = make_2dgaussian_kernel(3.0, size=5)  # FWHM = 3.0
+#         convolved_img    = convolve(deblended, kernel)
+
+        # perform erosion and dialation
+        img_changed      = binary_opening(image)
+
         bkg              = np.median(variance)       # perhaps change to rms of bkg
         threshold        = threshold * bkg 
 
-        segment_map      = detect_sources(convolved_img, threshold, npixels=10)
-        
+        # detect sources
+        segmap           = detect_sources(img_changed, threshold, npixels=10)
+        deblended        = deblend_sources(image, segmap,10, contrast=0.45)
+
         # removing sources within 10 pixels of border to improve quality of training_dataset
         # segment_map.remove_border_labels(10, partial_overlap=False, relabel=True)
-        return segment_map
+        return deblended
 
 
 # HELPER FUNCTIONS ----------------------#
@@ -354,10 +362,10 @@ def gen_psf(image_shape):
     
 
 def smooth_seg(segment_map):
-    """expands boundaries around all sources by 5 pixels"""
+    """expands boundaries around all sources by 1 pixels"""
     from skimage.segmentation import expand_labels
     segmap = np.array(segment_map.data)
-    return expand_labels(segmap,distance=5)
+    return expand_labels(segmap,distance=1)
 
     
 def create_cutouts(segment_map, image, variance, psf):
@@ -557,7 +565,7 @@ def cutout_sersic_fitting(template_hdu, cutouts):
             bg_coords = zip(bg_x_coords, bg_y_coords)
             for (x,y) in bg_coords:
                 if (x+xmin > 4100 or y+ymin>4200): print('yikes')
-                    layers[5].data[x+xmin,y+ymin] = 1
+                layers[5].data[x+xmin,y+ymin] = 1
 
 
             # writing this to specific layer in FITS image 
