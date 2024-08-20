@@ -28,7 +28,7 @@ python creating_datasets.py -n example_input.json -t <tokenfilepath_relative_to_
 # About this Program
 The script downloads FITS images from LSST based off user-inputted parameters (RA, DEC, and filter), and estimates the Sérsic index and half-light radius of every qualifying source using pysersic. The input paramters can be provided as command line options or through a JSON file. The program outputs the segmentation map of each LSST FITS image, and creates a FITS file with Sérsic values corresponding to a source ID so that each source can be linked to its fit.
 
-![Example output showing flux image sources mapped to Sersic classes](https://github.com/sierrajanson/rubin_preparation/blob/master/example_output.png)
+![Example output showing flux image sources mapped to Sersic classes](https://github.com/sierrajanson/rubin_preparation/blob/master/output_seg.png)
 
 # Documentation Consulted/Implement Linked Below
 
