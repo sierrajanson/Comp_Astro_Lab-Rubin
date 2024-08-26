@@ -1,4 +1,5 @@
 # Sierra Janson
+# MIT License
 # 05/23/2024 - Present
 
 import os
@@ -24,7 +25,24 @@ DATA_PATH_RAW = os.path.join(DATA_PATH, "raw")
 #######################################
 
 def create_parser():
-
+    """Specifies arguments for program, including:
+        --filename (str): Desired filename for downloaded LSST flux image | default="image{buffer}_{ra}_{dec}.fits",
+        --buffer (int): Numeric identifier to be included in the filenames of all images written to disk by this script, 
+        --filter (str): Desired u, g, r, i, z, or y filter/band of light for LSST flux image | default="i", 
+        --ra (float): Desired RA for LSST flux image,
+        --dec (float): Desired DEC for LSST flux image,
+        --verbose (boolean): Not used; would indicate whether informative information should be outputted,
+        --tokenfilepath (str): Path that contains Rubin API secret token
+        --onlyretrieveimages (boolean): True if user only desired for LSST images to be downloaded; False for entire script to run,
+        --lsstimagespath (str): Path that LSST images are downloaded to | default="data/raw/",
+        --outputpath (str): Path that this script's output files are written to | default="data/raw/"
+    
+    Args:
+        None
+    
+    Returns:
+        Parser object.
+    """
     # Handle user input with argparse
     parser      = argparse.ArgumentParser(
     description = "Detection flags and options from user.")
@@ -118,9 +136,18 @@ def create_parser():
 # authenticate() function
 #######################################
 def authenticate(tokenfilepath):
-        # follow instructions from RSP below to set up the API and retrieve your own token
-        # ENSURE you keep your token private
-        # https://dp0-2.lsst.io/data-access-analysis-tools/api-intro.html
+    """Follow linked. instructions from RSP below to set up the API and retrieve your own token. ENSURE you keep your token private. https://dp0-2.lsst.io/data-access-analysis-tools/api-intro.html
+    
+    Args:
+        tokenfilepath (str): Path that LSST images are downloaded to
+        
+    Returns: 
+        Authenticated service object if successful.
+        
+    Raises:
+        FileNotFoundError if tokenfilepath is not recognized
+        Exception if any error occurs
+    """
         RSP_TAP_SERVICE = 'https://data.lsst.cloud/api/tap'
         token_file      = ''
 
@@ -153,10 +180,18 @@ def authenticate(tokenfilepath):
 #######################################
 # main() function
 #######################################
-is_verbose = False
 def image_retrieval(args):
+    """Retrieves LSST flux images from the Rubin Science Platform.
+    
+    Args:
+        args (argparse Object): Arguments provided at commandline.
+    
+    Returns (List): List of paths of images downloaded. 
+    """
     import json
     import datetime
+    
+    
     # begin timer
     time_global_start = time.time()
 
@@ -277,7 +312,15 @@ def image_retrieval(args):
     return successful_images
 
 def set_up(image_path):
-        """Returns image, variance, and a graphable PSF from a provided FITS filepath"""
+        """Returns image, variance, and a graphable PSF from a provided FITS filepath
+        
+        Args:
+            image_path (str): Path to LSST flux image
+        
+        Returns:
+            (List[numpy.ndarray, numpy.ndarray, numpy.ndarray, astropy.io.fits.hdu.hdulist.HDUList]): Flux image data, variance image data, PSF image, and template HDU for output
+            
+        """
         hdul            = fits.open(image_path)
 
         image           = hdul[1].data            # image
@@ -306,10 +349,21 @@ def set_up(image_path):
         image_hdu2 = fits.ImageHDU(data=psf_image, name="PSF")
         template_hdu.append(image_hdu2)
         
-        return image, variance, psf_image, template_hdu
+        return [image, variance, psf_image, template_hdu]
 
 def identify_sources(variance, image, threshold=25):
-        """identify sources in fits image by threshold of how bright they are with respect to background RMS"""
+        """Identify sources in fits image by threshold of how bright they are with respect to the median of the variance image
+        
+        Args:
+            variance (numpy.ndarray): Variance image data
+            image (numpy.ndarray): Flux image data
+            threshold (int): Multiplier of median of variance image to determine threshold for an object to be considered a source by pysersic's detect_sources function
+        
+        Returns:
+            Segmentation map returned by Pysersic
+        
+        
+        """
         # from photutils.background   import Background2D, MedianBackground
         from astropy.convolution    import convolve
         from photutils.segmentation import detect_sources
@@ -332,39 +386,49 @@ def identify_sources(variance, image, threshold=25):
 
 
 # HELPER FUNCTIONS ----------------------#
-# DELETE GEN MASK SOON ----------------------------------------------------------------#
-def gen_mask(image_shape):
-    """generates mask in the shape of the image"""
-    import jax.numpy as jnp
-    return jnp.array(np.zeros(image_shape))
-
 def resize_image(psf_image, new_shape):
-    """resizes psf (or any passed image) to image size as per specfication of pysersic's FitSingle"""
+    """Resizes PSF (or any passed image) to image size as per specfication of pysersic's FitSingle using cv2 interpolation.
+    
+    Args:
+        psf_image (numpy.ndarray): PSF image
+        new_shape (Tuple[int, int]): Square size that image will be changed to
+    
+    Returns:
+        Resized PSF
+    """
     import cv2
     resized_psf = cv2.resize(psf_image, new_shape, interpolation=cv2.INTER_AREA)
     resized_psf /= np.sum(resized_psf)    
-    return resized_psf
-
-def gen_psf(image_shape):
-    from scipy.ndimage import gaussian_filter
-    psf = np.zeros(image_shape)
-    center = (image_shape[0] // 2, image_shape[1] // 2)
-    psf[center] = 1
-    sigma = 2  
-    psf = gaussian_filter(psf, sigma=sigma)
-    psf /= psf.sum()
-    return psf
-    
+    return resized_psf    
 
 def smooth_seg(segment_map):
-    """expands boundaries around all sources by 1 pixels"""
+    """Expands boundaries around all sources by 1 pixels
+    
+    Args:
+        segment_map (photutils.segmentation.core.SegmentationImage): Segmentation map of LSST flux image returned from pysersic's detect_sources function
+        
+    Returns
+        (numpy.ndarray): Segmentation map with the radius of all sources increased by one pixel to smooth out image appearence
+        
+    """
     from skimage.segmentation import expand_labels
     segmap = np.array(segment_map.data)
     return expand_labels(segmap,distance=1)
 
     
 def create_cutouts(segment_map, image, variance, psf):
-        """create same dimension cutouts around sources in the image & the variance & psf image"""
+        """Create same dimension cutouts around sources in the image & the variance & PSF image
+        
+        Args:
+            segment_map (photutils.segmentation.core.SegmentationImage): Segmentation map of LSST flux image returned from pysersic's detect_sources function
+            image (numpy.ndarray): Data from LSST flux image
+            variance (numpy.ndarray): Data from variance image
+            psf (numpy.ndarray): PSF image
+        
+        Returns:
+            cutouts (List[List[astropy.nddata.utils.Cutout2D, numpy.ndarray, jaxlib.xla_extension.ArrayImpl,  numpy.ndarray, numpy.ndarray, numpy.int64]]): List of a list of cutouts of sources of the flux image, flux image data, cutout mask data, cutout var data, PSF, and the source label from pysersic's detect_sources
+        
+        """
         import jax.numpy as jnp
 
         # grab bounding boxes (slices of cutouts)
@@ -445,6 +509,15 @@ def create_cutouts(segment_map, image, variance, psf):
         return cutouts
 
 def determine_class(n):
+    """Determines Sérsic class based on Sérsic index
+    
+    Args:
+        n (int): Sérsic index)
+    
+    Returns
+        (int): Sérsic class 
+    
+    """
     if (0 < n and n < 1.5):
         return 1
     if (1.5 <= n and n < 3):
@@ -457,7 +530,20 @@ def determine_class(n):
     
     
 def cutout_sersic_fitting(template_hdu, cutouts):
-    """fit sersic profiles to source cutouts using pysersic"""
+    """Fit Sérsic profiles to source cutouts using pysersic
+    
+    Args:
+        template_hdu (astropy.io.fits.hdu.hdulist.HDUList): HDU for FITS table for Sérsic values to be written to
+        cutouts (List[List[astropy.nddata.utils.Cutout2D, numpy.ndarray, jaxlib.xla_extension.ArrayImpl,  numpy.ndarray, numpy.ndarray, numpy.int64]]): From create_cutouts function; List of a list of cutouts of sources of the flux image, flux image data, cutout mask data, cutout var data, PSF, and the source label from pysersic's detect_sources 
+        
+    Returns:
+        template_hdul written with Sérsic fit values and hdul for layered segmentation map
+    
+    Raises:
+        AssertionError if the image cutout differs in shape from the model cutout
+        Exception if there is any error with a cutout image
+    
+    """
     from pysersic import FitSingle
     from pysersic.priors import SourceProperties
     from pysersic import check_input_data
@@ -604,7 +690,16 @@ def cutout_sersic_fitting(template_hdu, cutouts):
     return template_hdu, hdul
                                 
 def main(args, image_path, i):
-        """Manager function for entire process"""
+        """Manager function for entire process
+        
+        Args:
+            args (argparse object): Command line arguments provided
+            image_path (str): Path to LSST flux image
+            i (int): Iteration per LSST image downloaded in one script run. Most likely will be 0 unless user downloads multiple LSST images in one run of script.
+        
+        Returns: 
+            None
+        """
         time_global_start = time.time()
         
         # process:
